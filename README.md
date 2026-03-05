@@ -1,8 +1,9 @@
 # 🎯 TalentScout — AI Hiring Assistant
 
 A conversational AI chatbot that conducts **initial candidate screening** for technology placements.
-Built with **Streamlit** (frontend) and the **Anthropic Claude API** (LLM backend).
-
+Built with **Streamlit** (frontend) and the **Groq API** (LLM backend).
+## 🌐 Live Demo
+https://talentscout-ai-hiring-assistant-kpihbwdxa2mzkhsqxfnaqw.streamlit.app
 ---
 
 ## ✨ Features
