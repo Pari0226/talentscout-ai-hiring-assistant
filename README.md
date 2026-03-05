@@ -2,8 +2,9 @@
 
 A conversational AI chatbot that conducts **initial candidate screening** for technology placements.
 Built with **Streamlit** (frontend) and the **Groq API** (LLM backend).
-## 🌐 Live Demo
-https://talentscout-ai-hiring-assistant-kpihbwdxa2mzkhsqxfnaqw.streamlit.app
+
+🌐 **Live Demo**: [https://talentscout-ai-hiring-assistant-kpihbwdxa2mzkhsqxfnaqw.streamlit.app/](https://talentscout-ai-hiring-assistant-kpihbwdxa2mzkhsqxfnaqw.streamlit.app/)
+
 ---
 
 ## ✨ Features
@@ -31,7 +32,7 @@ talentscout/
 └── src/
     ├── __init__.py
     ├── prompts.py      # All system prompts + end-keyword logic
-    ├── llm.py          # Anthropic API wrapper
+    ├── llm.py          # Groq API wrapper
     ├── session.py      # Streamlit session state management + data persistence
     ├── chat.py         # Conversation controller (state machine)
     └── ui.py           # Streamlit component rendering
@@ -43,7 +44,7 @@ talentscout/
 
 ### Prerequisites
 - Python 3.10+
-- An [Anthropic API key](https://console.anthropic.com)
+- A [Groq API key](https://console.groq.com)
 
 ### Steps
 
@@ -60,7 +61,7 @@ pip install -r requirements.txt
 
 # 4. Set your API key
 cp .env.example .env
-# Edit .env and replace 'your_api_key_here' with your actual key
+# Edit .env and replace 'your_api_key_here' with your actual Groq API key
 
 # 5. Run the app
 streamlit run app.py
@@ -88,15 +89,15 @@ Open [http://localhost:8501](http://localhost:8501) in your browser.
 | Library | Version | Purpose |
 |---|---|---|
 | `streamlit` | ≥ 1.35 | Frontend UI framework |
-| `anthropic` | ≥ 0.28 | Claude API client |
+| `groq` | ≥ 0.9 | Groq API client |
 | `python-dotenv` | ≥ 1.0 | `.env` file loading |
 
 ### Model
-`claude-sonnet-4-20250514` — chosen for its strong instruction-following and conversational quality.
+`llama3-70b-8192` (via Groq) — chosen for its fast inference, strong instruction-following, and conversational quality.
 
 ### Architecture Decisions
 - **State machine** (`greeting → gather_info → tech_questions → wrap_up → ended`) keeps conversation flow predictable and testable.
-- **Full history** is passed on every LLM call so Claude maintains context without a separate memory store.
+- **Full history** is passed on every LLM call so the model maintains context without a separate memory store.
 - **Context hints** are injected as invisible suffixes to user messages (`[CONTEXT: ...]`) so the LLM always knows what to do next without breaking the chat illusion.
 - **Regex extraction** opportunistically parses emails, phones, years-of-experience, and tech keywords from free-text — reducing the need for strict structured inputs.
 - **Separate question-generation call** uses a minimal JSON-only system prompt for clean, parseable output.
