@@ -1,7 +1,5 @@
 """
 session.py — Manages Streamlit session state for TalentScout.
-
-Encapsulates all mutable state so app.py / ui.py stay clean.
 """
 
 from __future__ import annotations
@@ -22,8 +20,8 @@ DATA_DIR.mkdir(exist_ok=True)
 # ── Defaults ──────────────────────────────────────────────────────────────────
 _DEFAULTS: dict[str, Any] = {
     "stage": "greeting",
-    "history": [],           # list of {role, content} dicts for LLM
-    "display": [],           # list of {role, content} dicts for UI rendering
+    "history": [],
+    "display": [],
     "candidate": {
         "full_name": "",
         "email": "",
@@ -33,10 +31,11 @@ _DEFAULTS: dict[str, Any] = {
         "location": "",
         "tech_stack": "",
     },
-    "tech_questions": [],    # generated question list
-    "q_index": 0,            # which question we're on
-    "answered_qs": [],       # candidate answers to tech questions
+    "tech_questions": [],
+    "q_index": 0,
+    "answered_qs": [],
     "initialized": False,
+    "greeting_in_progress": False,
 }
 
 
@@ -44,13 +43,23 @@ def init() -> None:
     """Initialise session state with defaults (idempotent)."""
     for key, value in _DEFAULTS.items():
         if key not in st.session_state:
-            st.session_state[key] = value
+            if isinstance(value, dict):
+                st.session_state[key] = dict(value)
+            elif isinstance(value, list):
+                st.session_state[key] = list(value)
+            else:
+                st.session_state[key] = value
 
 
 def reset() -> None:
-    """Reset all session state to defaults."""
+    """Reset all session state to defaults (used by Start New Session button)."""
     for key, value in _DEFAULTS.items():
-        st.session_state[key] = value if not isinstance(value, (dict, list)) else type(value)(value)
+        if isinstance(value, dict):
+            st.session_state[key] = dict(value)
+        elif isinstance(value, list):
+            st.session_state[key] = list(value)
+        else:
+            st.session_state[key] = value
     st.session_state["candidate"] = {k: "" for k in _DEFAULTS["candidate"]}
 
 
@@ -62,13 +71,7 @@ def add_message(role: str, content: str) -> None:
 
 
 def save_candidate_data() -> str:
-    """
-    Persist candidate info + answers to a JSON file in data/.
-    Returns the file path (for logging / demo purposes only).
-
-    Data privacy: file names are hashed so no PII leaks into filenames.
-    In production, replace with encrypted DB writes.
-    """
+    """Persist candidate info + answers to a JSON file in data/."""
     candidate = st.session_state.candidate
     answers = st.session_state.answered_qs
     questions = st.session_state.tech_questions
@@ -76,7 +79,6 @@ def save_candidate_data() -> str:
     record = {
         "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
         "candidate": {
-            # Mask email partially for storage demo
             "full_name": candidate.get("full_name", ""),
             "email_hash": hashlib.sha256(
                 candidate.get("email", "").lower().encode()
@@ -94,19 +96,22 @@ def save_candidate_data() -> str:
     }
 
     filename = DATA_DIR / f"candidate_{record['timestamp'][:10]}_{record['candidate']['email_hash']}.json"
-    with open(filename, "w") as f:
-        json.dump(record, f, indent=2)
+    try:
+        with open(filename, "w") as f:
+            json.dump(record, f, indent=2)
+    except Exception:
+        pass
 
     return str(filename)
 
 
 # ── Stage helpers ──────────────────────────────────────────────────────────────
 STAGE_LABELS = {
-    "greeting":      "Welcome",
-    "gather_info":   "Profile",
+    "greeting":       "Welcome",
+    "gather_info":    "Profile",
     "tech_questions": "Assessment",
-    "wrap_up":       "Wrap-up",
-    "ended":         "Complete",
+    "wrap_up":        "Wrap-up",
+    "ended":          "Complete",
 }
 
 STAGE_ORDER = ["greeting", "gather_info", "tech_questions", "wrap_up", "ended"]

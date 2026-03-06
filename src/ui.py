@@ -11,6 +11,7 @@ from .chat import handle_initial_greeting, handle_user_input
 
 
 def _render_chat() -> None:
+    """Render all messages as styled chat bubbles."""
     st.markdown('<div class="ts-chat-wrap">', unsafe_allow_html=True)
     for msg in st.session_state.display:
         role = msg["role"]
@@ -67,9 +68,10 @@ def _render_header() -> None:
 
 
 def render_ui() -> None:
+    """Top-level UI render loop."""
     init()
 
-    # ── Sidebar ────────────────────────────────────────────────────────────────
+    # ── Sidebar: Candidate Profile ─────────────────────────────────────────────
     st.sidebar.title("🎯 Candidate Profile")
     candidate = st.session_state.get("candidate", {})
     fields = {
@@ -92,12 +94,10 @@ def render_ui() -> None:
     _render_header()
     _render_progress()
 
-    # ── Greeting: only fire if display is truly empty ──────────────────────────
-    # The key insight: check len(display) == 0 as the ONLY guard.
-    # We do NOT rely on st.session_state.initialized because Streamlit Cloud
-    # can rerun the script while session state is still being established.
-    # Instead we use a st.session_state key that is set atomically WITH
-    # the message being appended, so if display has content, we never re-greet.
+    # ── Greeting ───────────────────────────────────────────────────────────────
+    # Only fire if display is completely empty AND no greeting is in progress.
+    # len(display) == 0 is the safest guard — once a message exists, we never
+    # re-greet regardless of how many times Streamlit reruns the script.
     if len(st.session_state.display) == 0:
         if not st.session_state.get("greeting_in_progress", False):
             st.session_state["greeting_in_progress"] = True
@@ -107,6 +107,7 @@ def render_ui() -> None:
                     greeting = handle_initial_greeting()
                     add_message("assistant", greeting)
                     st.session_state["greeting_in_progress"] = False
+                    st.rerun()
                 except EnvironmentError as e:
                     st.session_state.initialized = False
                     st.session_state["greeting_in_progress"] = False
@@ -120,6 +121,7 @@ def render_ui() -> None:
 
     _render_chat()
 
+    # ── Ended state ────────────────────────────────────────────────────────────
     if st.session_state.stage == "ended":
         st.markdown(
             """
@@ -137,6 +139,7 @@ def render_ui() -> None:
                 st.rerun()
         return
 
+    # ── Input ──────────────────────────────────────────────────────────────────
     col_input, col_send = st.columns([5, 1])
     with col_input:
         user_input = st.text_input(
