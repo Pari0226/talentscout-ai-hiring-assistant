@@ -12,8 +12,6 @@ from .session import init, reset, stage_progress, STAGE_ORDER, STAGE_LABELS
 from .chat import handle_initial_greeting, handle_user_input
 
 
-# ── Helper: render chat history ───────────────────────────────────────────────
-
 def _render_chat() -> None:
     """Render all messages as styled chat bubbles."""
     st.markdown('<div class="ts-chat-wrap">', unsafe_allow_html=True)
@@ -38,8 +36,6 @@ def _render_chat() -> None:
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-# ── Helper: progress bar ───────────────────────────────────────────────────────
-
 def _render_progress() -> None:
     current_idx, total = stage_progress()
     bars = ""
@@ -58,8 +54,6 @@ def _render_progress() -> None:
     )
 
 
-# ── Helper: header ─────────────────────────────────────────────────────────────
-
 def _render_header() -> None:
     st.markdown(
         """
@@ -75,14 +69,11 @@ def _render_header() -> None:
     )
 
 
-# ── Main render function ───────────────────────────────────────────────────────
-
 def render_ui() -> None:
     """Top-level UI render loop."""
-    # Initialise state on first load
     init()
 
-    # Sidebar: Candidate Profile
+    # ── Sidebar: Candidate Profile ─────────────────────────────────────────────
     st.sidebar.title("🎯 Candidate Profile")
     candidate = st.session_state.get("candidate", {})
     fields = {
@@ -102,21 +93,24 @@ def render_ui() -> None:
     st.sidebar.markdown("---")
     st.sidebar.caption("Data handled per GDPR")
 
-    # Header
     _render_header()
-
-    # Progress tracker
     _render_progress()
 
     # ── First-time greeting ────────────────────────────────────────────────────
-    if not st.session_state.initialized:
+    # FIX: Set initialized=True BEFORE the API call.
+    # Streamlit Cloud reruns the script many times on page load.
+    # If we set the flag after the call, each rerun sees initialized=False
+    # and fires another greeting. Setting it first acts as an atomic lock.
+    # The len(display)==0 guard prevents re-greeting on page refresh.
+    if not st.session_state.initialized and len(st.session_state.display) == 0:
+        st.session_state.initialized = True  # lock immediately
         with st.spinner("Connecting to Aria…"):
             try:
                 greeting = handle_initial_greeting()
                 from .session import add_message
                 add_message("assistant", greeting)
-                st.session_state.initialized = True
             except EnvironmentError as e:
+                st.session_state.initialized = False  # allow retry on config error
                 st.error(str(e))
                 st.markdown(
                     '<div class="ts-info">🔑 Set your <code>GROQ_API_KEY</code> '
@@ -125,10 +119,8 @@ def render_ui() -> None:
                 )
                 return
 
-    # ── Chat history ───────────────────────────────────────────────────────────
     _render_chat()
 
-    # ── Ended state ────────────────────────────────────────────────────────────
     if st.session_state.stage == "ended":
         st.markdown(
             """
@@ -146,7 +138,6 @@ def render_ui() -> None:
                 st.rerun()
         return
 
-    # ── Input area ─────────────────────────────────────────────────────────────
     col_input, col_send = st.columns([5, 1])
     with col_input:
         user_input = st.text_input(
@@ -158,13 +149,11 @@ def render_ui() -> None:
     with col_send:
         send_clicked = st.button("Send", use_container_width=True)
 
-    # Process on send (button click or Enter)
     if send_clicked and user_input.strip():
         with st.spinner("Aria is typing…"):
             handle_user_input(user_input.strip())
         st.rerun()
 
-    # ── Privacy notice ─────────────────────────────────────────────────────────
     st.markdown(
         '<div class="ts-info">🔒 Your data is handled securely and in compliance with GDPR. '
         "Type <strong>exit</strong> or <strong>bye</strong> at any time to end the session.</div>",

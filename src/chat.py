@@ -33,18 +33,15 @@ def _extract_phone(text: str) -> str:
 
 
 def _extract_years(text: str) -> str:
-    m = re.search(r"\b(\d{1,2})\s*(?:years?|yrs?|yr)", text, re.IGNORECASE)
+    m = re.search(r"\b(\d{1,2})\s*(?:years?|yrs?|yr|months?|mos?)", text, re.IGNORECASE)
     if m:
-        return m.group(1)
+        return m.group(0)  # e.g. "2 months"
     m2 = re.search(r"\b(\d{1,2})\b", text)
     return m2.group(1) if m2 else ""
 
 
 def _try_fill_candidate(user_input: str, candidate: dict) -> None:
-    """
-    Attempt to opportunistically extract structured data from user free-text
-    and fill any empty candidate fields without blocking conversation flow.
-    """
+    """Opportunistically extract structured data from free-text."""
     if not candidate.get("email"):
         e = _extract_email(user_input)
         if e:
@@ -64,15 +61,11 @@ def _try_fill_candidate(user_input: str, candidate: dict) -> None:
 # ── Stage transition helpers ───────────────────────────────────────────────────
 
 def _maybe_advance_stage(assistant_reply: str, user_input: str) -> None:
-    """
-    Heuristically decide when to advance the conversation stage.
-    The LLM drives content; this function just tracks state machine.
-    """
+    """Heuristically decide when to advance the conversation stage."""
     stage = st.session_state.stage
 
     if stage == "gather_info":
         c = st.session_state.candidate
-        # Consider info gathered once we have all key fields
         filled = all([
             c.get("full_name"),
             c.get("email"),
@@ -84,13 +77,10 @@ def _maybe_advance_stage(assistant_reply: str, user_input: str) -> None:
             _trigger_question_generation()
 
     elif stage == "tech_questions":
+        # FIX: Only advance when ALL questions answered, not after just one
         q_index = st.session_state.q_index
         total = len(st.session_state.tech_questions)
-        if q_index == 0 and not st.session_state.get("all_questions_presented", False):
-            st.session_state.all_questions_presented = True
-        elif st.session_state.get("all_questions_presented", False):
-            st.session_state.stage = "wrap_up"
-        elif q_index >= total:
+        if total > 0 and q_index >= total:
             st.session_state.stage = "wrap_up"
 
 
@@ -105,37 +95,35 @@ def _trigger_question_generation() -> None:
     questions = generate_tech_questions(prompt)
     st.session_state.tech_questions = questions
     st.session_state.q_index = 0
-    st.session_state.all_questions_presented = False
     st.session_state.stage = "tech_questions"
 
 
 def _update_candidate_from_context(history: list[dict]) -> None:
-    """
-    Parse recent assistant messages to fill candidate fields.
-    We look at the last few exchanges and use regex heuristics.
-    """
+    """Parse conversation history to fill candidate profile fields."""
     c = st.session_state.candidate
-    # Scan all user messages for extractable data
+
     for msg in history:
         if msg["role"] == "user":
             _try_fill_candidate(msg["content"], c)
 
-    # Try to extract name from first user message (usually a greeting or name intro)
+    # Name: first short user message that looks like a name
     if not c.get("full_name") and len(history) >= 2:
         first_user = next((m["content"] for m in history if m["role"] == "user"), "")
-        # Simple heuristic: if message is short (≤6 words) and looks like a name
         words = first_user.strip().split()
         if 1 <= len(words) <= 5 and all(w[0].isupper() or w[0].isalpha() for w in words if w):
             c["full_name"] = first_user.strip().title()
 
-    # Extract tech stack from user messages mentioning technologies
+    # Tech stack — expanded to include NLP, OpenCV, LLM, ML etc.
     if not c.get("tech_stack"):
         tech_keywords = re.compile(
             r"\b(python|javascript|typescript|react|vue|angular|node|django|flask|"
             r"fastapi|spring|java|kotlin|swift|rust|go|golang|c\+\+|c#|dotnet|"
             r"ruby|rails|php|laravel|mysql|postgres|postgresql|mongodb|redis|"
             r"docker|kubernetes|aws|gcp|azure|terraform|graphql|rest|sql|nosql|"
-            r"pytorch|tensorflow|scikit|pandas|numpy|spark|kafka|elasticsearch)\b",
+            r"pytorch|tensorflow|scikit-learn|scikit|pandas|numpy|spark|kafka|"
+            r"elasticsearch|nlp|opencv|llm|huggingface|langchain|streamlit|"
+            r"machine learning|deep learning|neural network|transformers|"
+            r"prompt engineering|generative ai)\b",
             re.IGNORECASE,
         )
         for msg in history:
@@ -145,23 +133,48 @@ def _update_candidate_from_context(history: list[dict]) -> None:
                     c["tech_stack"] = ", ".join(dict.fromkeys(t.lower() for t in techs))
                     break
 
-    # Desired position heuristic
+    # Desired position — broad pattern to catch "AI/ML intern", "internship" etc.
     if not c.get("desired_position"):
         pos_pattern = re.compile(
             r"\b(software engineer|frontend|backend|full.?stack|data scientist|"
-            r"ml engineer|devops|cloud engineer|mobile developer|android|ios|"
-            r"product manager|qa engineer|site reliability|sre)\b",
+            r"ml engineer|ai.?ml|ai\/ml|machine learning engineer|"
+            r"devops|cloud engineer|mobile developer|android|ios|"
+            r"product manager|qa engineer|site reliability|sre|"
+            r"intern|internship|developer|programmer|analyst|architect)\b",
             re.IGNORECASE,
         )
         for msg in history:
             if msg["role"] == "user":
                 m = pos_pattern.search(msg["content"])
                 if m:
-                    c["desired_position"] = m.group(0).title()
+                    c["desired_position"] = msg["content"].strip()[:80]
+                    break
+
+    # Location — "based in X", city names, Indian cities
+    if not c.get("location"):
+        loc_explicit = re.compile(
+            r"(?:based in|located in|from|living in|currently in|currently at)\s+([A-Za-z\s,]+?)(?:\.|,|\n|$)",
+            re.IGNORECASE,
+        )
+        loc_city = re.compile(
+            r"\b(gurgaon|gurugram|haryana|delhi|mumbai|bangalore|bengaluru|hyderabad|"
+            r"chennai|pune|kolkata|noida|india|remote|usa|uk|canada|australia|"
+            r"new york|san francisco|london|berlin|singapore)\b",
+            re.IGNORECASE,
+        )
+        for msg in history:
+            if msg["role"] == "user":
+                m = loc_explicit.search(msg["content"])
+                if m:
+                    c["location"] = m.group(1).strip()[:60]
+                    break
+                m2 = loc_city.search(msg["content"])
+                if m2:
+                    c["location"] = msg["content"].strip()[:60]
                     break
 
 
-# ── Main entry point ───────────────────────────────────────────────────────────
+# ── Main entry points ──────────────────────────────────────────────────────────
 
 def handle_initial_greeting() -> str:
     """Generate the opening bot message."""
@@ -177,17 +190,16 @@ def handle_initial_greeting() -> str:
 
 
 def handle_user_input(user_input: str) -> str:
-    """
-    Process a user message and return the assistant reply.
+    """Process a user message and return the assistant reply."""
 
-    Steps
-    -----
-    1. Check for end keywords → graceful exit.
-    2. Build context-aware LLM call.
-    3. Update session state (stage, candidate data).
-    4. Return reply string.
-    """
-    # ── 1. End-keyword check ──────────────────────────────────────────────────
+    # ── 1. Already ended ─────────────────────────────────────────────────────
+    if st.session_state.stage == "ended":
+        message = "The screening process has already been completed. Thank you for your time."
+        add_message("user", user_input)
+        add_message("assistant", message)
+        return message
+
+    # ── 2. End-keyword check ──────────────────────────────────────────────────
     if is_end_keyword(user_input):
         save_candidate_data()
         farewell = chat(
@@ -201,40 +213,32 @@ def handle_user_input(user_input: str) -> str:
         st.session_state.stage = "ended"
         return farewell
 
-    # ── Check if screening is complete ───────────────────────────────────────
-    if st.session_state.stage == "ended":
-        message = "The screening process has already been completed. Thank you for your time."
-        add_message("user", user_input)
-        add_message("assistant", message)
-        return message
-
-    # ── Validation checks ────────────────────────────────────────────────────
+    # ── 3. Input validation (gather_info only) ────────────────────────────────
     if st.session_state.stage == "gather_info":
-        # Email validation
         if "@" in user_input:
             if not re.match(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$', user_input.strip()):
                 message = "That doesn't look like a valid email address. Could you please enter a valid one? (e.g. name@example.com)"
                 add_message("user", user_input)
                 add_message("assistant", message)
                 return message
-        
-        # Phone validation
-        if re.search(r'\d{6,}', user_input):
-            digits = ''.join(re.findall(r'\d', user_input))
-            if len(digits) != 10:
+
+        stripped = user_input.strip()
+        if re.match(r'^[\d\s\+\-\(\)]+$', stripped):
+            digits = re.sub(r'\D', '', stripped)
+            if len(digits) > 0 and len(digits) != 10:
                 message = "Please provide a valid 10-digit phone number (digits only)."
                 add_message("user", user_input)
                 add_message("assistant", message)
                 return message
 
-    # ── 2. Extract any structured data embedded in user text ─────────────────
+    # ── 4. Extract structured data ────────────────────────────────────────────
     _update_candidate_from_context(st.session_state.history + [{"role": "user", "content": user_input}])
 
-    # ── 3. Build stage-specific context injection ────────────────────────────
+    # ── 5. Build context hint ─────────────────────────────────────────────────
     stage = st.session_state.stage
     context_hint = _build_context_hint(stage, user_input)
 
-    # ── 4. Call LLM ──────────────────────────────────────────────────────────
+    # ── 6. Call LLM ──────────────────────────────────────────────────────────
     try:
         reply = chat(
             system=SYSTEM_PROMPT,
@@ -245,26 +249,26 @@ def handle_user_input(user_input: str) -> str:
     except Exception as exc:
         reply = f"⚠️ I encountered a technical issue. Please try again. (Error: {exc})"
 
-    # ── 5. Update history ────────────────────────────────────────────────────
+    # ── 7. Update history ────────────────────────────────────────────────────
     add_message("user", user_input)
     add_message("assistant", reply)
 
-    # ── 6. Record tech answers ───────────────────────────────────────────────
+    # ── 8. Record tech answers ───────────────────────────────────────────────
     if stage == "tech_questions":
         st.session_state.answered_qs.append(user_input)
         st.session_state.q_index += 1
 
-    # ── 7. Stage transitions ─────────────────────────────────────────────────
+    # ── 9. Stage transitions ─────────────────────────────────────────────────
     _maybe_advance_stage(reply, user_input)
 
-    # ── 8. Save data at wrap-up ───────────────────────────────────────────────
+    # ── 10. Save data at wrap-up ──────────────────────────────────────────────
     if st.session_state.stage == "wrap_up" and stage != "wrap_up":
         try:
             save_candidate_data()
         except Exception:
-            pass  # non-fatal
+            pass
 
-    # ── 9. Mark ended after wrap-up message ───────────────────────────────────
+    # ── 11. Mark ended after wrap-up ──────────────────────────────────────────
     if stage == "wrap_up":
         st.session_state.stage = "ended"
 
@@ -272,37 +276,43 @@ def handle_user_input(user_input: str) -> str:
 
 
 def _build_context_hint(stage: str, user_input: str) -> str:
-    """
-    Append an invisible context hint to the user message so the LLM
-    knows exactly what to do next without breaking the chat illusion.
-    """
+    """Append invisible context hints to guide the LLM at each stage."""
     c = st.session_state.candidate
 
     if stage == "gather_info":
-        c = st.session_state.candidate
         if not c.get("email"):
             return "\n\n[CONTEXT: Ask for the candidate's email address.]"
         elif not c.get("phone"):
             return "\n\n[CONTEXT: Ask for the candidate's phone number (10 digits).]"
         else:
-            missing = [k for k, v in c.items() if not v and k not in ["email", "phone"]]
+            missing = [k for k, v in c.items() if not v and k not in ("email", "phone")]
             if missing:
                 fields = ", ".join(missing[:3])
-                return f"\n\n[CONTEXT: Still need: {fields}. Continue gathering info naturally. Do NOT list all fields at once.]"
+                return (
+                    f"\n\n[CONTEXT: Still need: {fields}. "
+                    f"Continue gathering info naturally. Do NOT list all fields at once.]"
+                )
             else:
-                return "\n\n[CONTEXT: All info gathered. Transition smoothly into the technical assessment phase and ask the first technical question.]"
+                return "\n\n[CONTEXT: All candidate info gathered. Transition smoothly into the technical assessment phase.]"
 
     elif stage == "tech_questions":
         questions = st.session_state.tech_questions
         q_index = st.session_state.q_index
-        if q_index == 0:
-            # Present all questions
-            numbered = "\n".join(f"{i+1}. {q}" for i, q in enumerate(questions))
-            return f"\n\n[CONTEXT: Present all technical questions at once, numbered 1 to {len(questions)}:\n{numbered}\n\nWait for the candidate to answer all of them.]"
+        total = len(questions)
+        if q_index < total:
+            next_q = questions[q_index]
+            return (
+                f"\n\n[CONTEXT: Acknowledge their answer briefly (1 sentence), "
+                f"then ask technical question {q_index + 1}/{total}: \"{next_q}\"]"
+            )
         else:
-            return "\n\n[CONTEXT: All technical questions answered. Transition to wrap-up: thank the candidate, summarise next steps.]"
+            return "\n\n[CONTEXT: All technical questions answered. Transition to wrap-up: thank the candidate warmly, summarise next steps.]"
 
     elif stage == "wrap_up":
-        return "\n\n[CONTEXT: Wrap up the interview. Thank the candidate warmly. Explain that the TalentScout team will review within 3–5 business days and contact them via email. Wish them well.]"
+        return (
+            "\n\n[CONTEXT: Wrap up the interview. Thank the candidate warmly. "
+            "Explain that the TalentScout team will review within 3–5 business days "
+            "and contact them via email. Wish them well.]"
+        )
 
     return ""
