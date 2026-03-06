@@ -1,19 +1,16 @@
 """
 ui.py — Streamlit UI components for TalentScout Hiring Assistant.
-
-Keeps all st.* calls in one place; logic lives in chat.py / session.py.
 """
 
 from __future__ import annotations
 
 import streamlit as st
 
-from .session import init, reset, stage_progress, STAGE_ORDER, STAGE_LABELS
+from .session import init, reset, stage_progress, STAGE_ORDER, STAGE_LABELS, add_message
 from .chat import handle_initial_greeting, handle_user_input
 
 
 def _render_chat() -> None:
-    """Render all messages as styled chat bubbles."""
     st.markdown('<div class="ts-chat-wrap">', unsafe_allow_html=True)
     for msg in st.session_state.display:
         role = msg["role"]
@@ -70,10 +67,9 @@ def _render_header() -> None:
 
 
 def render_ui() -> None:
-    """Top-level UI render loop."""
     init()
 
-    # ── Sidebar: Candidate Profile ─────────────────────────────────────────────
+    # ── Sidebar ────────────────────────────────────────────────────────────────
     st.sidebar.title("🎯 Candidate Profile")
     candidate = st.session_state.get("candidate", {})
     fields = {
@@ -96,28 +92,31 @@ def render_ui() -> None:
     _render_header()
     _render_progress()
 
-    # ── First-time greeting ────────────────────────────────────────────────────
-    # FIX: Set initialized=True BEFORE the API call.
-    # Streamlit Cloud reruns the script many times on page load.
-    # If we set the flag after the call, each rerun sees initialized=False
-    # and fires another greeting. Setting it first acts as an atomic lock.
-    # The len(display)==0 guard prevents re-greeting on page refresh.
-    if not st.session_state.initialized and len(st.session_state.display) == 0:
-        st.session_state.initialized = True  # lock immediately
-        with st.spinner("Connecting to Aria…"):
-            try:
-                greeting = handle_initial_greeting()
-                from .session import add_message
-                add_message("assistant", greeting)
-            except EnvironmentError as e:
-                st.session_state.initialized = False  # allow retry on config error
-                st.error(str(e))
-                st.markdown(
-                    '<div class="ts-info">🔑 Set your <code>GROQ_API_KEY</code> '
-                    "in a <code>.env</code> file or as an environment variable, then reload.</div>",
-                    unsafe_allow_html=True,
-                )
-                return
+    # ── Greeting: only fire if display is truly empty ──────────────────────────
+    # The key insight: check len(display) == 0 as the ONLY guard.
+    # We do NOT rely on st.session_state.initialized because Streamlit Cloud
+    # can rerun the script while session state is still being established.
+    # Instead we use a st.session_state key that is set atomically WITH
+    # the message being appended, so if display has content, we never re-greet.
+    if len(st.session_state.display) == 0:
+        if not st.session_state.get("greeting_in_progress", False):
+            st.session_state["greeting_in_progress"] = True
+            st.session_state.initialized = True
+            with st.spinner("Connecting to Aria…"):
+                try:
+                    greeting = handle_initial_greeting()
+                    add_message("assistant", greeting)
+                    st.session_state["greeting_in_progress"] = False
+                except EnvironmentError as e:
+                    st.session_state.initialized = False
+                    st.session_state["greeting_in_progress"] = False
+                    st.error(str(e))
+                    st.markdown(
+                        '<div class="ts-info">🔑 Set your <code>GROQ_API_KEY</code> '
+                        "in a <code>.env</code> file or as an environment variable, then reload.</div>",
+                        unsafe_allow_html=True,
+                    )
+                    return
 
     _render_chat()
 
